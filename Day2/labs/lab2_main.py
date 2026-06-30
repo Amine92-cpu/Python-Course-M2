@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from dataclasses import dataclass, field as dc_field
@@ -18,7 +17,8 @@ class Server:
     tags: list[str] = dc_field(default_factory=list)
 
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        protocol = "https" if self.port == 443 else "http"
+        return f"{protocol}://{self.host}:{self.port}"
 
 
 # ─── Pydantic schemas ────────────────────────────────────────────────────────
@@ -65,31 +65,37 @@ async def register_server(server: ServerIn):
 
 @app.get("/servers", response_model=list[ServerOut])
 async def list_servers(status: str | None = None):
-    # TODO: return all servers; filter by status if provided
-    pass
+    servers = list(_store.values())
+    if status:
+        return [s for s in servers if s.status.upper() == status.upper()]
+    return servers
 
 
 @app.get("/servers/{server_id}", response_model=ServerOut)
 async def get_server(server_id: int):
-    # TODO: return server or raise 404
-    pass
+    if server_id not in _store:
+        raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+    return _store[server_id]
 
 
 @app.delete("/servers/{server_id}", status_code=204)
 async def delete_server(server_id: int):
-    # TODO: delete server or raise 404
-    pass
+    if server_id not in _store:
+        raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+    del _store[server_id]
+    return
 
 
 @app.post("/servers/{server_id}/check", response_model=ServerOut)
 async def trigger_check(server_id: int):
-    import httpx, asyncio
+    import httpx
     if server_id not in _store:
         raise HTTPException(404, "Server not found")
     server = _store[server_id]
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{server.base_url()}/health")
+            path = "/status/200" if "httpbin" in server.host else "/health"
+            resp = await client.get(f"{server.base_url()}{path}")
             server.status = "UP" if resp.status_code == 200 else "DEGRADED"
     except Exception:
         server.status = "DOWN"
